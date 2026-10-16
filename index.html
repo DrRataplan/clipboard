@@ -73,44 +73,30 @@
     .card h3 { margin: 0 0 0.4rem; font-size: 0.95rem; }
     .card button { margin-top: 0.4rem; }
     code { font-family: ui-monospace, Menlo, monospace; font-size: 0.9em; }
+    details { margin-top: 2.25rem; }
+    details summary { cursor: pointer; font-weight: 600; font-size: 1.05rem; }
   </style>
 </head>
 <body>
-  <h1>🧪 Clipboard Playground</h1>
+  <h1>Clipboard Playground</h1>
   <p class="muted" id="statusLine">Checking environment…</p>
 
   <section>
-    <h2>1 · Paste</h2>
-    <p class="muted">Paste into the box (Ctrl+V / Cmd+V). Every MIME type on the clipboard is shown, with its content.</p>
+    <h2>Inspect</h2>
+    <p class="muted">Paste into the box (Ctrl+V / Cmd+V) or read the clipboard directly — every MIME type is shown with its content.</p>
     <div id="pasteZone" contenteditable="true"></div>
     <div class="row" style="margin-top:0.5rem">
-      <button id="btnClearZone">Clear box</button>
+      <button id="btnRead" class="primary">Read clipboard</button>
+      <button id="btnReadText">Read as text</button>
+      <button id="btnClear">Clear</button>
     </div>
-    <div id="pasteResult"></div>
+    <div id="inspectResult"></div>
   </section>
 
   <section>
-    <h2>2 · Read (Async Clipboard API)</h2>
-    <p class="muted">Reads the clipboard without pasting. Needs the clipboard permission and a focused window.</p>
-    <div class="row">
-      <button id="btnRead" class="primary">navigator.clipboard.read()</button>
-      <button id="btnReadText">navigator.clipboard.readText()</button>
-    </div>
-    <div id="readResult"></div>
-  </section>
-
-  <section>
-    <h2>3 · Write</h2>
-    <p class="muted">
-      Any MIME type goes in the type field — type to pick from the list, or invent your own.
-      Content is written as a Blob of that type; paste a <code>data:</code> URL to write binary (e.g. <code>image/png</code>).
-    </p>
-    <p class="muted">
-      Browser reality check: Chrome only accepts <code>text/plain</code>, <code>text/html</code>, <code>image/png</code>
-      and custom <code>web …</code> formats; Safari writes HTML as <code>web text/html</code>.
-      Vendor types like <code>application/vnd.fontoxml</code> or <code>application/xml</code> therefore need the
-      <code>web&nbsp;</code> prefix in Chrome (e.g. <code>web application/vnd.fontoxml</code>). Unsupported types throw — watch the log.
-    </p>
+    <h2>Write</h2>
+    <p class="muted">Queue MIME types and content below, edit, then write. Queuing a type that is already queued updates that row. Text is written as a Blob of its type; use a <code>data:</code> URL for binary (e.g. <code>image/png</code>).</p>
+    <p class="muted">Browser reality check: Chrome only accepts <code>text/plain</code>, <code>text/html</code>, <code>image/png</code> and custom <code>web …</code> formats; Safari writes HTML as <code>web text/html</code>. Vendor types like <code>application/vnd.fontoxml</code> need the <code>web&nbsp;</code> prefix in Chrome. Unsupported types throw — watch the log.</p>
     <table id="writeTable">
       <thead>
         <tr><th>MIME type</th><th>Content</th><th></th></tr>
@@ -145,26 +131,29 @@
     </datalist>
     <div class="row" style="margin-top:0.5rem">
       <button id="btnAddRow">+ Add row</button>
-      <button id="btnWrite" class="primary">navigator.clipboard.write()</button>
-      <button id="btnDemo">Demo: write text/plain + text/html</button>
+      <button id="btnWrite" class="primary">Write to clipboard</button>
     </div>
   </section>
 
-  <section>
-    <h2>Log</h2>
-    <div class="row">
+  <details id="logDetails">
+    <summary>Log</summary>
+    <div class="row" style="margin:0.5rem 0">
       <button id="btnClearLog">Clear log</button>
     </div>
     <div id="log"></div>
-  </section>
+  </details>
 
   <script type="module">
     const $ = (s) => document.querySelector(s);
     const logBox = $('#log');
+    const logDetails = $('#logDetails');
 
     function log(msg, kind = 'info') {
       const el = document.createElement('div');
-      if (kind !== 'info') el.className = `log-${kind}`;
+      if (kind !== 'info') {
+        el.className = `log-${kind}`;
+        logDetails.open = true;
+      }
       el.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
       logBox.appendChild(el);
       logBox.scrollTop = logBox.scrollHeight;
@@ -216,7 +205,7 @@
     }
     renderStatus();
 
-    // ---------- cards for blobs ----------
+    // ---------- result cards ----------
 
     async function blobToCard(container, type, blob) {
       const card = el('div', 'card');
@@ -243,8 +232,8 @@
         card.append(el('p', 'muted', 'could not decode as text'));
       }
 
-      const btn = el('button', '', '✎ queue in writer');
-      btn.title = 'Copy this type + content into the write table below';
+      const btn = el('button', '', 'Queue in writer');
+      btn.title = 'Add this type + content to the write queue below';
       btn.onclick = async () => {
         addWriteRow(type || blob.type, text !== null ? text : await blobToDataURL(blob));
       };
@@ -252,19 +241,24 @@
       container.append(card);
     }
 
-    // ---------- 1 · paste ----------
+    // ---------- inspect: paste + read ----------
 
     const pasteZone = $('#pasteZone');
-    const pasteResult = $('#pasteResult');
+    const inspectResult = $('#inspectResult');
+
+    function clearInspect() {
+      pasteZone.textContent = '';
+      inspectResult.textContent = '';
+    }
 
     pasteZone.addEventListener('paste', (e) => {
       const cd = e.clipboardData;
       if (!cd) { log('paste event carried no clipboardData', 'error'); return; }
-      pasteResult.textContent = '';
+      inspectResult.textContent = '';
       const types = Array.from(cd.types || []);
       log(`paste: ${types.length} type(s): ${types.join(', ') || '(none)'}`);
       if (types.length === 0 && cd.files.length === 0) {
-        pasteResult.append(el('p', 'muted', 'Clipboard was empty.'));
+        inspectResult.append(el('p', 'muted', 'Clipboard was empty.'));
         return;
       }
       for (const type of types) {
@@ -275,18 +269,18 @@
           data = cd.getData(type);
         } catch (err) {
           card.append(el('pre', '', `getData("${type}") threw: ${err.message}`));
-          pasteResult.append(card);
+          inspectResult.append(card);
           continue;
         }
         if (data === '') {
           card.append(el('pre', '', '(empty — browsers often refuse getData() for this type during paste)'));
         } else {
           card.append(el('pre', '', truncate(data)));
-          const btn = el('button', '', '✎ queue in writer');
+          const btn = el('button', '', 'Queue in writer');
           btn.onclick = () => addWriteRow(type, data);
           card.append(btn);
         }
-        pasteResult.append(card);
+        inspectResult.append(card);
       }
       for (const file of cd.files) {
         const card = el('div', 'card');
@@ -300,20 +294,15 @@
           img.src = URL.createObjectURL(file);
           card.append(img);
         }
-        const btn = el('button', '', '✎ queue in writer');
+        const btn = el('button', '', 'Queue in writer');
         btn.onclick = async () => addWriteRow(file.type, await blobToDataURL(file));
         card.append(btn);
-        pasteResult.append(card);
+        inspectResult.append(card);
       }
     });
 
-    $('#btnClearZone').onclick = () => { pasteZone.textContent = ''; };
-
-    // ---------- 2 · read ----------
-
     async function readClipboard() {
-      const out = $('#readResult');
-      out.textContent = '';
+      inspectResult.textContent = '';
       if (typeof navigator.clipboard?.read !== 'function') {
         log('navigator.clipboard.read() is not available in this browser', 'error');
         return;
@@ -322,12 +311,12 @@
         log('calling navigator.clipboard.read()… (keep this tab focused)');
         const items = await navigator.clipboard.read();
         log(`read() → ${items.length} ClipboardItem(s)`, 'success');
-        if (items.length === 0) out.append(el('p', 'muted', 'Clipboard is empty.'));
+        if (items.length === 0) inspectResult.append(el('p', 'muted', 'Clipboard is empty.'));
         for (const [i, item] of items.entries()) {
           log(`item ${i}: types = ${item.types.join(', ') || '(none)'}`);
           for (const type of item.types) {
             try {
-              await blobToCard(out, type, await item.getType(type));
+              await blobToCard(inspectResult, type, await item.getType(type));
             } catch (err) {
               log(`getType("${type}") failed: ${err.name}: ${err.message}`, 'error');
             }
@@ -339,15 +328,14 @@
     }
 
     async function readClipboardText() {
-      const out = $('#readResult');
-      out.textContent = '';
+      inspectResult.textContent = '';
       try {
         const text = await navigator.clipboard.readText();
         log(`readText() → ${text.length} chars`, 'success');
         const card = el('div', 'card');
         card.append(el('h3', 'mime', 'text/plain (via readText)'));
         card.append(el('pre', '', truncate(text)));
-        out.append(card);
+        inspectResult.append(card);
       } catch (err) {
         log(`readText() failed: ${err.name}: ${err.message}`, 'error');
       }
@@ -355,12 +343,28 @@
 
     $('#btnRead').addEventListener('click', readClipboard);
     $('#btnReadText').addEventListener('click', readClipboardText);
+    $('#btnClear').onclick = clearInspect;
 
-    // ---------- 3 · write ----------
+    // ---------- write queue ----------
 
     const writeTbody = $('#writeTable tbody');
 
     function addWriteRow(type = '', content = '') {
+      if (type) {
+        const existing = [...writeTbody.querySelectorAll('tr')].find(
+          (tr) => tr.querySelector('input.mime').value.trim() === type
+        );
+        if (existing) {
+          existing.querySelector('textarea.content').value = content;
+          existing.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          existing.animate(
+            [{ outline: '2px solid #4a9eff' }, { outline: '2px solid transparent' }],
+            { duration: 1200 }
+          );
+          log(`queue: updated existing row for ${type}`);
+          return existing;
+        }
+      }
       const tr = el('tr');
       const tdType = el('td');
       const mime = el('input', 'mime');
@@ -374,12 +378,12 @@
       ta.value = content;
       tdContent.append(ta);
       const tdBtn = el('td');
-      const rm = el('button', '', '✕');
-      rm.title = 'Remove row';
+      const rm = el('button', '', 'Remove');
       rm.onclick = () => tr.remove();
       tdBtn.append(rm);
       tr.append(tdType, tdContent, tdBtn);
       writeTbody.append(tr);
+      return tr;
     }
 
     async function writeClipboard() {
@@ -416,16 +420,9 @@
 
     $('#btnAddRow').onclick = () => addWriteRow();
     $('#btnWrite').addEventListener('click', writeClipboard);
-    $('#btnDemo').addEventListener('click', async () => {
-      writeTbody.textContent = '';
-      addWriteRow('text/plain', 'Hello from the clipboard playground 👋');
-      addWriteRow('text/html', '<b>Hello</b> from the <i>clipboard playground</i> 👋');
-      await writeClipboard();
-    });
 
-    addWriteRow('text/plain', 'Hello from the clipboard playground 👋');
-    addWriteRow('text/html', '<b>Hello</b> from the <i>clipboard playground</i> 👋');
-    addWriteRow('web text/html', '<u>web text/html</u> — the Safari-style HTML clipboard type');
+    addWriteRow('text/plain', 'Hello from the clipboard playground');
+    addWriteRow('text/html', '<b>Hello</b> from the clipboard playground');
 
     // ---------- log ----------
 
@@ -433,7 +430,7 @@
 
     log(`user agent: ${navigator.userAgent}`);
     log(`page loaded from ${location.href}`);
-    log('ready — paste into the box, read the clipboard, or write your own MIME types');
+    log('ready — paste or read the clipboard, queue types into the writer, edit, write');
   </script>
 </body>
 </html>
